@@ -84,17 +84,17 @@ class COTRDataset(data.Dataset):
             return_index=True,
         )
         query_keypoints_xy = query_keypoints_xyz[:, 0:2]
-        query_keypoints_z_proj = query_keypoints_xyz[:, 2:3]
+        query_keypoints_z_proj = query_keypoints_xyz[:, 2:3] # N x 1
         query_keypoints_z = query_cap.depth_map[np.floor(query_keypoints_xy[:, 1:2]).astype('int'), np.floor(query_keypoints_xy[:, 0:1]).astype('int')]
         mask = (abs(query_keypoints_z - query_keypoints_z_proj) < 0.5)[:, 0]
-        query_keypoints_xy = query_keypoints_xy[mask]
+        query_keypoints_xy = query_keypoints_xy[mask] # N x 2
 
         if query_keypoints_xy.shape[0] < self.num_kp:
             return self.__getitem__(random.randint(0, self.__len__() - 1))
 
         nn_keypoints_xy = nn_keypoints_xy[valid_index_1][valid_index_2][mask]
         assert nn_keypoints_xy.shape == query_keypoints_xy.shape
-        corrs = np.concatenate([query_keypoints_xy, nn_keypoints_xy], axis=1)
+        corrs = np.concatenate([query_keypoints_xy, nn_keypoints_xy], axis=1) # N x 4, x1y1x2y2
         corrs = self._trim_corrs(corrs)
         # flip augmentation
         if np.random.uniform() < 0.5:
