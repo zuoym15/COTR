@@ -83,7 +83,7 @@ class BaseTrainer(abc.ABC):
             #     continue  # for resuming
             # self.iteration = iteration
             # self.iteration += 1
-            if self.iteration % self.valid_iter == 0:
+            if self.iteration % self.valid_iter == self.valid_iter-1:
                 time.sleep(2)  # Prevent possible deadlock during epoch transition
                 self.validate()
             self.train_batch(data_pack)

@@ -183,7 +183,7 @@ class CATERDataset(data.Dataset):
         self.max_rotation = 30 # debug
         self.rotation_chance = 0.5 # debug
 
-        self.dataset = tracking_datasets.get_dataset('cater', seqlen=6, shuffle=False)
+        self.dataset = tracking_datasets.get_dataset('cater', seqlen=6, shuffle=False, env=dataset_type)
 
     def _trim_corrs(self, in_corrs):
         length = in_corrs.shape[0]

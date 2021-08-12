@@ -32,7 +32,7 @@ def get_dataset(name, seqlen, shuffle=True, env='plate'):
     elif name == 'mcs':
         return McsDataset(shuffle=shuffle, seqlen=seqlen)
     elif name == 'cater':
-        return CaterDataset(shuffle=shuffle, seqlen=seqlen)
+        return CaterDataset(shuffle=shuffle, seqlen=seqlen, env=env)
     elif name == 'arrow':
         return ArrowDataset(shuffle=shuffle, seqlen=seqlen)
     else:
@@ -1008,7 +1008,7 @@ class McsMaskDataset(torch.utils.data.Dataset):
         return item_names
 
 class CaterDataset(torch.utils.data.Dataset):
-    def __init__(self, shuffle=True, seqlen=50):
+    def __init__(self, shuffle=True, seqlen=50, env=None):
 
         #cater_data_mod = 'a'
         #cater_data_seqlen = 300
@@ -1018,8 +1018,14 @@ class CaterDataset(torch.utils.data.Dataset):
 
         cater_dataset_location = "/projects/katefgroup/datasets/cater/npzs"
 
+        if (env != 'val') and (env != 'test'):
+            set_suffix = "t"
+        else:
+            set_suffix = "v"
+
+
         # trainset = "t%ss%st" % (cater_data_mod, cater_data_seqlen)
-        trainset = "m%ss%st" % (cater_data_mod, cater_data_seqlen)
+        trainset = "m%ss%s%s" % (cater_data_mod, cater_data_seqlen, set_suffix)
         dataset_location = "%s" % cater_dataset_location
         dataset_path = '%s/%s.txt' % (dataset_location, trainset)
 
