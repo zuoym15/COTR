@@ -183,7 +183,9 @@ class CATERDataset(data.Dataset):
         self.max_rotation = 30 # debug
         self.rotation_chance = 0.5 # debug
 
-        self.dataset = tracking_datasets.get_dataset('cater', seqlen=6, shuffle=False, env=dataset_type)
+        self.dataset = tracking_datasets.get_dataset('cater', seqlen=6, shuffle=True, env=dataset_type)
+
+        self.vis_count = 0
 
     def _trim_corrs(self, in_corrs):
         length = in_corrs.shape[0]
@@ -210,7 +212,7 @@ class CATERDataset(data.Dataset):
             nn_cap = capture.rotate_capture(nn_cap, theta)
         return query_cap, nn_cap
 
-    def __getitem__(self, index):
+    def __getitem_2view__(self, index):
         assert self.opt.k_size == 1
         
         sample = self.dataset[index]
@@ -369,6 +371,114 @@ class CATERDataset(data.Dataset):
             out['queries'] = torch.from_numpy(corrs[:, :2]).float()
             out['targets'] = torch.from_numpy(corrs[:, 2:]).float()
         return out
+
+    def __getitem__(self, index):
+        assert self.opt.k_size == 1
+        
+        sample = self.dataset[index]
+        # if self.need_rotation:
+        #     query_cap, nn_cap = self.augment_with_rotation(query_cap, nn_cap)
+
+        # randomly select a query frame and a nn frame 
+        pix_T_camXs = sample['pix_T_camXs'].cuda() # S x 4 x 4
+        rgb_camXs = sample['rgb_camXs'].cuda() # S x 3 x H x W
+        xyz_camXs = sample['xyz_camXs'].cuda() # S x N x 3
+        origin_T_camXs = sample['world_T_camXs'].cuda() # S x 4 x 4
+        scorelist = sample['scorelist_s'].cuda() # S x K
+        lrtlist_camXs = sample['lrtlist_camXs'].cuda() # S x K x 19
+        S, _, H, W = rgb_camXs.shape
+        _, K = scorelist.shape
+
+        rgb_camXs += .5 # range [0,1]
+
+        nn_frame_id = 0
+
+        # only take points belong to one object
+        obj_id = np.random.choice(int(scorelist[0].sum().item()))
+        inb = tracking_utils.geom.get_pts_inbound_lrt(xyz_camXs[nn_frame_id:nn_frame_id+1], lrtlist_camXs[nn_frame_id:nn_frame_id+1, obj_id], add_pad=0).reshape(-1) # N
+        nn_xyz_camXs = xyz_camXs[nn_frame_id:nn_frame_id+1, inb] # 1, N, 3
+
+        nn_xy_camXs = tracking_utils.geom.camera2pixels(nn_xyz_camXs, pix_T_camXs[nn_frame_id:nn_frame_id+1]) # 1 x N x 2
+        if torch.prod(torch.as_tensor(nn_xy_camXs.shape)) == 0:
+            return self.__getitem__(np.random.choice(self.__len__()))
+        nn_keypoints_x = nn_xy_camXs[..., 0] # 1 x N
+        nn_keypoints_y = nn_xy_camXs[..., 1] # 1 x N, in image coord
+
+        keypoints_xy = []
+        visibles = []
+
+        for query_frame_id in range(1, S):
+            # transform the xyzs into query frame, to find correspondence
+            origin_T_nn = origin_T_camXs[nn_frame_id:nn_frame_id+1]
+            origin_T_query = origin_T_camXs[query_frame_id:query_frame_id+1]
+
+            query_T_nn_cam = torch.matmul(tracking_utils.geom.safe_inverse(origin_T_query), origin_T_nn)
+
+            mat1 = lrtlist_camXs[nn_frame_id, obj_id][3:].reshape(4,4)
+            mat2 = lrtlist_camXs[query_frame_id, obj_id][3:].reshape(4,4)
+            query_T_nn_obj = torch.matmul(mat2, mat1.inverse()).unsqueeze(0)
+
+            query_T_nn = torch.matmul(query_T_nn_obj, query_T_nn_cam)
+
+            query_xyz_camXs = tracking_utils.geom.apply_4x4(query_T_nn, nn_xyz_camXs)
+
+            query_xy_camXs = tracking_utils.geom.camera2pixels(query_xyz_camXs, pix_T_camXs[query_frame_id:query_frame_id+1]) # 
+
+            nn_keypoints_xy = nn_xy_camXs[0].cpu().numpy() # N x 2
+            query_keypoints_xy = query_xy_camXs[0].cpu().numpy() # N x 2
+
+            # obtain visible / non-visible
+            depth, valid = tracking_utils.geom.create_depth_image(pix_T_camXs[query_frame_id:query_frame_id+1], xyz_camXs[query_frame_id:query_frame_id+1], H, W)
+            query_d_camXs = tracking_utils.geom.bilinear_sample2d(depth, query_xy_camXs[:,:,0], query_xy_camXs[:,:,1])
+            query_xyd_camXs = torch.cat([query_xy_camXs, query_d_camXs.permute(0,2,1)], dim=2)
+            query_xyz_camXs_cycle = tracking_utils.geom.xyd2pointcloud(query_xyd_camXs, pix_T_camXs[query_frame_id:query_frame_id+1])
+            reproj_dist = torch.norm(query_xyz_camXs - query_xyz_camXs_cycle, dim=-1)
+            visible = (reproj_dist < 0.1).reshape(-1).cpu().numpy() # N
+
+            query_img = rgb_camXs[query_frame_id] # 3 x H x W
+            nn_img = rgb_camXs[nn_frame_id] # 3 x H x W
+
+            if query_frame_id == 1:
+                keypoints_xy.append(nn_keypoints_xy)
+                keypoints_xy.append(np.copy(query_keypoints_xy))
+                visibles.append(np.copy(visible))
+            else:
+                keypoints_xy.append(np.copy(query_keypoints_xy))
+                visibles.append(np.copy(visible))
+
+        keypoints_xy = np.stack(keypoints_xy, 0)
+        visibles = np.stack(visibles, 0)
+        mask = np.logical_and(((keypoints_xy[:,:,0] > 0) * (keypoints_xy[:,:,0] < W)).sum(0) == 6, ((keypoints_xy[:,:,1] > 0) * (keypoints_xy[:,:,1] < H)).sum(0) == 6)
+        keypoints_xy = keypoints_xy[:,mask]
+        visibles = visibles[:,mask]
+
+        mask = np.random.choice(keypoints_xy.shape[1], 100)
+        keypoints_xy = keypoints_xy[:,mask]
+        visibles = visibles[:,mask]
+
+        # # for cv2 vis
+        sbs_img_np = (np.concatenate([rgb.cpu().numpy() for rgb in rgb_camXs], 2).transpose((1,2,0)) * 255).astype(np.uint8)
+
+        kp_id = np.random.choice(keypoints_xy.shape[1])
+        for i in range(1, S):
+            x1 = keypoints_xy[i-1, kp_id, 0] + (i-1) * W
+            x2 = keypoints_xy[i, kp_id, 0] + i * W
+            y1 = keypoints_xy[i-1, kp_id, 1]
+            y2 = keypoints_xy[i, kp_id, 1]
+            if visibles[i-1, kp_id]:
+                color = (0,255,0)
+            else:
+                color = (0,0,255)
+            sbs_img_np = cv2.line(sbs_img_np, (int(x1), int(y1)), (int(x2), int(y2)), color, 1)
+
+        cv2.imwrite('vis_cotr/corr{0}.png'.format(self.vis_count), sbs_img_np[..., [2,1,0]]) # rgb->bgr
+        self.vis_count += 1
+        if self.vis_count > 20:
+            import sys; sys.exit()
+        #time.sleep(1)
+        #assert(False)
+
+        return
 
     
 # class COTRZoomDataset(COTRDataset):
