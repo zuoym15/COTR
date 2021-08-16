@@ -1014,7 +1014,7 @@ class CaterDataset(torch.utils.data.Dataset):
         #cater_data_seqlen = 300
 
         cater_data_mod = 'aj'
-        cater_data_seqlen = 6
+        cater_data_seqlen = 8
 
         cater_dataset_location = "/projects/katefgroup/datasets/cater/npzs"
 
@@ -1025,7 +1025,7 @@ class CaterDataset(torch.utils.data.Dataset):
 
 
         # trainset = "t%ss%st" % (cater_data_mod, cater_data_seqlen)
-        trainset = "m%ss%s%s" % (cater_data_mod, cater_data_seqlen, set_suffix)
+        trainset = "t%ss%s%s" % (cater_data_mod, cater_data_seqlen, set_suffix)
         dataset_location = "%s" % cater_dataset_location
         dataset_path = '%s/%s.txt' % (dataset_location, trainset)
 

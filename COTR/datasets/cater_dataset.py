@@ -218,20 +218,23 @@ class CATERDataset(data.Dataset):
         #     query_cap, nn_cap = self.augment_with_rotation(query_cap, nn_cap)
 
         # randomly select a query frame and a nn frame 
-        pix_T_camXs = sample['pix_T_camXs'] # S x 4 x 4
-        rgb_camXs = sample['rgb_camXs'] # S x 3 x H x W
-        xyz_camXs = sample['xyz_camXs'] # S x N x 3
-        origin_T_camXs = sample['world_T_camXs'] # S x 4 x 4
-        scorelist = sample['scorelist_s'] # S x K
-        lrtlist_camXs = sample['lrtlist_camXs'] # S x K x 19
+        pix_T_camXs = sample['pix_T_camXs'].cuda() # S x 4 x 4
+        rgb_camXs = sample['rgb_camXs'].cuda() # S x 3 x H x W
+        xyz_camXs = sample['xyz_camXs'].cuda() # S x N x 3
+        origin_T_camXs = sample['world_T_camXs'].cuda() # S x 4 x 4
+        scorelist = sample['scorelist_s'].cuda() # S x K
+        lrtlist_camXs = sample['lrtlist_camXs'].cuda() # S x K x 19
         S, _, H, W = rgb_camXs.shape
         _, K = scorelist.shape
 
         rgb_camXs += .5 # range [0,1]
 
         rand_frame_id = np.random.choice(np.arange(S), 2, replace=False)
-        query_frame_id = rand_frame_id[0]
-        nn_frame_id = rand_frame_id[1]
+        #query_frame_id = rand_frame_id[0]
+        #nn_frame_id = rand_frame_id[1]
+
+        nn_frame_id = 0
+        query_frame_id = 1
 
         filtered_xyzs = []
         # only take points belong to objects
@@ -259,13 +262,22 @@ class CATERDataset(data.Dataset):
 
         query_xy_camXs = tracking_utils.geom.camera2pixels(query_xyz_camXs, pix_T_camXs[query_frame_id:query_frame_id+1]) # 
 
-        nn_keypoints_xy = nn_xy_camXs[0].numpy() # N x 2
-        query_keypoints_xy = query_xy_camXs[0].numpy() # N x 2
+        nn_keypoints_xy = nn_xy_camXs[0].cpu().numpy() # N x 2
+        query_keypoints_xy = query_xy_camXs[0].cpu().numpy() # N x 2
+
+        # obtain visible / non-visible
+        depth, valid = tracking_utils.geom.create_depth_image(pix_T_camXs[query_frame_id:query_frame_id+1], xyz_camXs[query_frame_id:query_frame_id+1], H, W)
+        query_d_camXs = tracking_utils.geom.bilinear_sample2d(depth, query_xy_camXs[:,:,0], query_xy_camXs[:,:,1])
+        query_xyd_camXs = torch.cat([query_xy_camXs, query_d_camXs.permute(0,2,1)], dim=2)
+        query_xyz_camXs_cycle = tracking_utils.geom.xyd2pointcloud(query_xyd_camXs, pix_T_camXs[query_frame_id:query_frame_id+1])
+        reproj_dist = torch.norm(query_xyz_camXs - query_xyz_camXs_cycle, dim=-1)
+        visible = (reproj_dist < 0.1).reshape(-1).cpu().numpy() # N
 
         query_img = rgb_camXs[query_frame_id] # 3 x H x W
         nn_img = rgb_camXs[nn_frame_id] # 3 x H x W
 
         # TODO: reshape/crop the images. now just concat raw image together
+        '''
         if random.random() < self.rotation_chance:
             theta1 = np.random.uniform(low=-1, high=1) * self.max_rotation
         else:
@@ -295,7 +307,7 @@ class CATERDataset(data.Dataset):
         nn_keypoints_xy = transform(nn_keypoints_xy.T, c2, s2, (constants.MAX_SIZE, constants.MAX_SIZE), rot=theta2).T
 
         H, W = constants.MAX_SIZE, constants.MAX_SIZE
-
+        '''
 
             # query_img = tvtf.rotate(query_img, theta)
             # # adjust labels accordingly
@@ -323,15 +335,20 @@ class CATERDataset(data.Dataset):
         corrs = self._trim_corrs(corrs)
 
         # # for cv2 vis
-        # sbs_img_np = sbs_img.numpy()
-        # sbs_img_np = (np.transpose(sbs_img_np, (1, 2, 0))*255.0).astype(np.uint8).copy()
-        # for i in range(len(corrs)):
-        #     corr = corrs[i] # 4
-        #     sbs_img_np = cv2.line(sbs_img_np, (int(corr[0]), int(corr[1])), (int(corr[2])+W, int(corr[3])), (0, 255, 0), 1)
+        sbs_img_np = sbs_img.cpu().numpy()
+        sbs_img_np = (np.transpose(sbs_img_np, (1, 2, 0))*255.0).astype(np.uint8).copy()
+        for i in range(len(corrs)):
+            corr = corrs[i] # 4
+            if visible[i]:
+                color = (0,255,0)
+            else:
+                color = (0,0,255)
+            sbs_img_np = cv2.line(sbs_img_np, (int(corr[0]), int(corr[1])), (int(corr[2])+W, int(corr[3])), color, 1)
 
-        # cv2.imwrite('corr.png', sbs_img_np[..., [2,1,0]]) # rgb->bgr
-        # time.sleep(1)
-        # assert(False)
+        cv2.imwrite('corr.png', sbs_img_np[..., [2,1,0]]) # rgb->bgr
+        import ipdb; ipdb.set_trace()
+        #time.sleep(1)
+        #assert(False)
 
         corrs[:, 2] += W
         corrs = corrs.astype(float)
