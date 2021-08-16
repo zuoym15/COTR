@@ -40,19 +40,19 @@ def train(opt):
         train_dset = cater_dataset.CATERDataset(opt, 'train')
         val_dset = cater_dataset.CATERDataset(opt, 'val')
 
-    train_loader = DataLoader(train_dset, batch_size=opt.batch_size,
+    train_loader = DataLoader(train_dset, batch_size=1,
                               shuffle=True, num_workers=0,
                               worker_init_fn=utils.worker_init_fn, pin_memory=True)
-    val_loader = DataLoader(val_dset, batch_size=opt.batch_size,
+    val_loader = DataLoader(val_dset, batch_size=1,
                             shuffle=opt.shuffle_data, num_workers=0,
                             drop_last=True, worker_init_fn=utils.worker_init_fn, pin_memory=True)
-
     train_iterloader = iter(train_loader)
     while True:
         try:
             sample = next(train_iterloader)
         except StopIteration:
             break
+    import ipdb; ipdb.set_trace()
 
     '''
     train_loader = DataLoader(train_dset, batch_size=opt.batch_size,
