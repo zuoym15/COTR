@@ -908,7 +908,7 @@ def apply_4x4s_to_lrts(Ys_T_Xs, lrt_Xs):
 def create_depth_image_single(xy, z, H, W, force_positive=True, max_val=100.0, serial=False, slices=20):
     # turn the xy coordinates into image inds
     xy = torch.round(xy).long()
-    depth = torch.zeros(H*W, dtype=torch.float32, device=torch.device('cuda'))
+    depth = torch.zeros(H*W, dtype=torch.float32, device=xy.device)
     depth[:] = max_val
     
     # lidar reports a sphere of measurements
@@ -994,8 +994,8 @@ def create_depth_image(pix_T_cam, xyz_cam, H, W, offset_amount=0, max_val=100.0,
     xy = apply_pix_T_cam(pix_T_cam, xyz_cam)
     z = xyz_cam[:,:,2]
 
-    depth = torch.zeros(B, 1, H, W, dtype=torch.float32, device=torch.device('cuda'))
-    valid = torch.zeros(B, 1, H, W, dtype=torch.float32, device=torch.device('cuda'))
+    depth = torch.zeros(B, 1, H, W, dtype=torch.float32, device=xyz_cam.device)
+    valid = torch.zeros(B, 1, H, W, dtype=torch.float32, device=xyz_cam.device)
     for b in list(range(B)):
         depth_b, valid_b = create_depth_image_single(xy[b], z[b], H, W, max_val=max_val, serial=serial, slices=slices)
         if offset_amount:
@@ -1006,7 +1006,7 @@ def create_depth_image(pix_T_cam, xyz_cam, H, W, offset_amount=0, max_val=100.0,
                 for off_y in range(offset_amount):
                     for sign in [-1,1]:
                         offset = np.array([sign*off_x,sign*off_y]).astype(np.float32)
-                        offset = torch.from_numpy(offset).reshape(1, 2).cuda()
+                        offset = torch.from_numpy(offset).reshape(1, 2).to(xyz_cam.device)
                         # offsets.append(offset)
                         depth_, valid_ = create_depth_image_single(xy[b] + offset, z[b], H, W, max_val=max_val)
                         depth_ = depth_.reshape(-1)
@@ -2676,3 +2676,11 @@ def bilinear_sample2d(im, x, y, return_inbounds=False):
         return output, inbounds
 
     return output # B, C, N
+
+def back2color(i, blacken_zeros=False):
+    if blacken_zeros:
+        const = torch.tensor([-0.5])
+        i = torch.where(i==0.0, const.cuda() if i.is_cuda else const, i)
+        return back2color(i)
+    else:
+        return ((i+0.5)*255).type(torch.ByteTensor)

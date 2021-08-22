@@ -14,12 +14,31 @@ from COTR.utils import utils, debug_utils, constants
 from COTR.trainers import base_trainer, tensorboard_helper
 from COTR.projector import pcd_projector
 
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
 
 class COTRTrainer(base_trainer.BaseTrainer):
     def __init__(self, opt, model, optimizer, criterion,
                  train_loader, val_loader):
         super().__init__(opt, model, optimizer, criterion,
                          train_loader, val_loader)
+
+        self.timemeter = AverageMeter()
 
     def validate_batch(self, data_pack):
         assert self.model.training is False
@@ -125,6 +144,8 @@ class COTRTrainer(base_trainer.BaseTrainer):
         query = data_pack['queries'].cuda()
         target = data_pack['targets'].cuda()
 
+        #import time
+        #t0 = time.time()
         self.optim.zero_grad()
         pred = self.model(img, query)['pred_corrs']
         loss = torch.nn.functional.mse_loss(pred, target)
@@ -152,6 +173,9 @@ class COTRTrainer(base_trainer.BaseTrainer):
             loss.backward()
             self.push_training_data(data_pack, pred, target, loss)
         self.optim.step()
+        #t1 = time.time()
+        #self.timemeter.update(t1 - t0)
+        #print(self.timemeter.avg)
 
     def push_training_data(self, data_pack, pred, target, loss):
         tb_datapack = tensorboard_helper.TensorboardDatapack()
