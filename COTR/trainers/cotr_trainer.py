@@ -48,6 +48,8 @@ class COTRTrainer(base_trainer.BaseTrainer):
             target = data_pack['targets'].cuda()
             self.optim.zero_grad()
             pred = self.model(img, query)['pred_corrs']
+            if np.random.rand() < 0.05:
+                print((pred - query)[0])
             loss = torch.nn.functional.mse_loss(pred, target)
             if self.opt.cycle_consis and self.opt.bidirectional:
                 cycle = self.model(img, pred)['pred_corrs']
@@ -148,6 +150,8 @@ class COTRTrainer(base_trainer.BaseTrainer):
         #t0 = time.time()
         self.optim.zero_grad()
         pred = self.model(img, query)['pred_corrs']
+        if np.random.rand() < 0.01:
+            print((pred - query)[0])
         loss = torch.nn.functional.mse_loss(pred, target)
         if self.opt.cycle_consis and self.opt.bidirectional:
             cycle = self.model(img, pred)['pred_corrs']

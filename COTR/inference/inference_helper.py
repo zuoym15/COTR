@@ -233,6 +233,7 @@ def cotr_corr_base(model, img_a, img_b, queries_a):
 
 
 try:
+    import ipdb; ipdb.set_trace()
     from vispy import gloo
     from vispy import app
     from vispy.util.ptime import time

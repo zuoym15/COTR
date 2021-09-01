@@ -222,6 +222,7 @@ def visualize_corrs(img1, img2, corrs, mask=None):
     # Move keypoints to coordinates to image coordinates
     x1 = x1 * scale1
     x2 = x2 * scale2
+    import ipdb; ipdb.set_trace()
     # recompute the coordinates for the second image
     x2p = x2 + np.array([[0, h1]])
     fig = plt.figure(frameon=False)

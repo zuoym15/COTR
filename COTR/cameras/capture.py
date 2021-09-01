@@ -14,7 +14,7 @@ import numpy as np
 import imageio
 import PIL
 from PIL import Image
-import tables
+#import tables
 
 from COTR.cameras.camera_pose import CameraPose, rotate_camera_pose
 from COTR.cameras.pinhole_camera import PinholeCamera, rotate_pinhole_camera, crop_pinhole_camera

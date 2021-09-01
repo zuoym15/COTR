@@ -61,7 +61,7 @@ def main(opt):
     axarr[3].imshow(out)
     axarr[3].title.set_text('Overlay')
     axarr[3].axis('off')
-    plt.show()
+    plt.savefig("demo_same.png")
 
 
 if __name__ == "__main__":

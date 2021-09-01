@@ -37,8 +37,8 @@ def train(opt):
         # train_dset = cotr_dataset.COTRZoomDataset(opt, 'train')
         # val_dset = cotr_dataset.COTRZoomDataset(opt, 'val')
     else:
-        train_dset = cater_cotr_dataset.CATERPointTrajDataset(opt, 'train')
-        val_dset = cater_cotr_dataset.CATERPointTrajDataset(opt, 'val')
+        train_dset = cater_cotr_dataset.CATERPointTrajDataset(opt, 'train', use_augs=True)
+        val_dset = cater_cotr_dataset.CATERPointTrajDataset(opt, 'val', use_augs=False)
 
     '''
     train_loader = DataLoader(train_dset, batch_size=1,
@@ -47,7 +47,7 @@ def train(opt):
     val_loader = DataLoader(val_dset, batch_size=1,
                             shuffle=opt.shuffle_data, num_workers=0,
                             drop_last=True, worker_init_fn=utils.worker_init_fn, pin_memory=True)
-    train_iterloader = iter(train_loader)
+    train_iterloader = iter(val_loader)
     while True:
         try:
             sample = next(train_iterloader)
@@ -83,7 +83,7 @@ if __name__ == "__main__":
     set_nn_arguments(parser)
     set_COTR_arguments(parser)
     parser.add_argument('--num_kp', type=int,
-                        default=100)
+                        default=256)
     parser.add_argument('--kp_pool', type=int,
                         default=100)
     parser.add_argument('--enable_zoom', type=str2bool,

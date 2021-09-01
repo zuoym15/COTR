@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torchvision.transforms import functional as tvtf
 from torch.utils import data
-import cv2
+#import cv2
 import imutils
 
 from COTR.datasets import tracking_datasets
@@ -116,7 +116,8 @@ def crop(img, center, scale, res, rot=0):
         new_img = imutils.rotate(new_img,rot) 
         new_img = new_img[pad:-pad, pad:-pad]
 
-    new_img = im_to_torch(cv2.resize(new_img, dsize=(res[0],res[1]), interpolation=cv2.INTER_LINEAR))
+    new_img = F.interpolate(torch.from_numpy(new_img).cpu().float().permute(2,0,1).unsqueeze(0), (res[1], res[0]), mode='bilinear').squeeze(0).permute(1,2,0).numpy()
+    new_img = im_to_torch(new_img)
         #scipy.misc.imresize(new_img, res)
     return new_img
 

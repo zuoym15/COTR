@@ -16,8 +16,8 @@ from sklearn.decomposition import PCA
 # import utils.basic
 import torch.nn.functional as F
 
-import utils.py
-import utils.basic
+#import .py
+#import .basic
 
 from PIL import Image
 import io
@@ -1707,6 +1707,37 @@ class Summ_writer(object):
     def draw_traj_on_image_py(self, rgb, traj, S=50, thickness=1):
         # all inputs are numpy tensors
         # rgb is 3 x H x W
+        # traj is S x 2
+
+        rgb = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+        H, W, C = rgb.shape
+        assert(C==3)
+        S, D = traj.shape
+        assert(D==2)
+
+        color_map = matplotlib.cm.get_cmap('coolwarm')
+
+        for s in range(S-1):
+            color = np.array(color_map((s+1)/float(S))[:3]) * 255 # rgb
+            cv2.line(rgb,
+                     (int(traj[s,0]), int(traj[s,1])),
+                     (int(traj[s+1,0]), int(traj[s+1,1])),
+                     color,
+                     thickness,
+                     cv2.LINE_AA)
+        
+        # draw the endpoint of traj
+        color = np.array(color_map(1.0)[:3]) * 255
+        cv2.circle(rgb, (traj[-1,0], traj[-1,1]), thickness*2, color, -1)
+
+        rgb = cv2.cvtColor(rgb.astype(np.uint8), cv2.COLOR_BGR2RGB)
+        return rgb
+
+    '''
+    def draw_traj_on_image_py(self, rgb, traj, S=50, thickness=1):
+        # all inputs are numpy tensors
+        # rgb is 3 x H x W
         # traj is N x 2
         rgb = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
@@ -1740,6 +1771,7 @@ class Summ_writer(object):
 
         rgb = cv2.cvtColor(rgb.astype(np.uint8), cv2.COLOR_BGR2RGB)
         return rgb
+    '''
 
     def summ_traj_on_image(self, name, traj, pix_T_cam, H, W, traj_g=None, size_factor=1.0, only_return=False, frame_id=None):
         # traj is B x S x 3
@@ -1823,6 +1855,34 @@ class Summ_writer(object):
             rgb = rgb_e
 
         return self.summ_rgb(name, rgb, only_return=only_return, frame_id=frame_id)
+
+    def summ_traj2ds_on_rgbs(self, name, trajs, rgbs, frame_ids=None, only_return=False):
+        # trajs is B, S, N, 2
+        # rgbs is B, S, C, H, W
+        B, S, C, H, W = rgbs.shape
+        B, S2, N, D = trajs.shape
+        assert(S==S2)
+
+        rgbs = rgbs[0] # S, C, H, W
+        trajs = trajs[0] # S, N, 2
+        
+        rgbs_color = []
+        for rgb in rgbs:
+            rgb = back2color(rgb).detach().cpu().numpy() 
+            rgb = np.transpose(rgb, [1, 2, 0]) # put channels last
+            rgbs_color.append(rgb) # each element 3 x H x W
+
+        for i in range(N):
+            traj = trajs[:,i].long().detach().cpu().numpy() # S, 2
+            for t in range(S):
+                rgbs_color[t] = self.draw_traj_on_image_py(rgbs_color[t], traj[:t+1], S=S)
+
+        rgbs = []
+        for rgb in rgbs_color:
+            rgb = torch.from_numpy(rgb).permute(2, 0, 1).unsqueeze(0)
+            rgbs.append(preprocess_color(rgb))
+
+        return self.summ_rgbs(name, rgbs, only_return=only_return, frame_ids=frame_ids)
 
 
     def summ_traj_on_occ(self, name, traj, occ_mem, vox_util, heightmap=False, traj_g=None, bev=False, fro=False, show_bkg=True, already_mem=False, sigma=2, only_return=False, frame_id=None):

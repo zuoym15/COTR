@@ -9,30 +9,31 @@ import torch.nn.functional as F
 from PIL import Image
 import random
 
-# from torch._C import dtype, set_flush_denormal
+from torch._C import dtype, set_flush_denormal
 # from detectron2.structures.masks import polygons_to_bitmask
-import sys
-sys.path.append('.')
 
+#import utils.py
+#import utils.geom
+#import utils.improc
 from . import utils
 from .utils import py
 from .utils import geom
-# from .utils import improc
-
-# import utils.py
-# import utils.geom
-# import utils.improc
 
 import glob
 import json
 
-def get_dataset(name, seqlen, shuffle=True, env='plate'):
+import imageio
+import cv2
+
+from torchvision.transforms import ColorJitter
+
+def get_dataset(name, seqlen, shuffle=True, env='plate', dset='t', root_dir='/projects/katefgroup/datasets'):
     if name == 'manip':
         return ManipDataset(shuffle=shuffle, seqlen=seqlen, env=env)
     elif name == 'mcs':
         return McsDataset(shuffle=shuffle, seqlen=seqlen)
     elif name == 'cater':
-        return CaterDataset(shuffle=shuffle, seqlen=seqlen, env=env)
+        return CaterDataset(shuffle=shuffle, seqlen=seqlen, dset=dset, root_dir=root_dir)
     elif name == 'arrow':
         return ArrowDataset(shuffle=shuffle, seqlen=seqlen)
     else:
@@ -76,6 +77,7 @@ class CaterBackgroundDataset(torch.utils.data.Dataset):
         self.all_rgbs = all_rgbs
 
     def __getitem__(self, index):
+        
         # read detections
         det_filename = self.records[index]
         det_fullpath = os.path.join(self.dataset_location, det_filename)
@@ -1007,27 +1009,21 @@ class McsMaskDataset(torch.utils.data.Dataset):
             'x']
         return item_names
 
-class CaterDataset(torch.utils.data.Dataset):
-    def __init__(self, shuffle=True, seqlen=50, env=None):
 
-        #cater_data_mod = 'a'
+class CaterDataset(torch.utils.data.Dataset):
+    def __init__(self, root_dir='/projects/katefgroup/datasets', shuffle=True, seqlen=50, dset='t'):
+
+        cater_data_mod = 'ak'
+        cater_data_seqlen = 32
+
+        #cater_data_mod = 'ai'
         #cater_data_seqlen = 300
 
-        cater_data_mod = 'aj'
-        cater_data_seqlen = 8
+        cater_dataset_location = "%s/cater/npzs" % root_dir
 
-        cater_dataset_location = "/projects/katefgroup/datasets/cater/npzs"
-
-        if (env != 'val') and (env != 'test'):
-            set_suffix = "t"
-        else:
-            set_suffix = "v"
-
-
-        # trainset = "t%ss%st" % (cater_data_mod, cater_data_seqlen)
-        trainset = "t%ss%s%s" % (cater_data_mod, cater_data_seqlen, set_suffix)
+        dataset = "t%ss%s%s" % (cater_data_mod, cater_data_seqlen, dset)
         dataset_location = "%s" % cater_dataset_location
-        dataset_path = '%s/%s.txt' % (dataset_location, trainset)
+        dataset_path = '%s/%s.txt' % (dataset_location, dataset)
 
         print('dataset_path = %s' % dataset_path)
         with open(dataset_path) as f:
@@ -1060,23 +1056,23 @@ class CaterDataset(torch.utils.data.Dataset):
 
         return_dict = {}
 
-        pix_T_camXs = torch.from_numpy(d['pix_T_camXs']).float()
+        pix_T_camXs = torch.from_numpy(d['pix_T_camXs']).cpu().float()
 
         rgb_camXs = d['rgb_camXs']
         # move channel dim inward, like pytorch wants
         rgb_camXs = np.transpose(rgb_camXs, axes=[0, 3, 1, 2])
-        rgb_camXs = utils.py.preprocess_color(rgb_camXs)
-        rgb_camXs = torch.from_numpy(rgb_camXs).float()
+        rgb_camXs = rgb_camXs.astype(np.float32) * 1./255 - 0.5
+        rgb_camXs = torch.from_numpy(rgb_camXs).cpu().float()
 
-        xyz_camXs = torch.from_numpy(d['xyz_camXs']).float()
+        xyz_camXs = torch.from_numpy(d['xyz_camXs']).cpu().float()
 
-        lrtlist = torch.from_numpy(d['lrt_traj_world']).float()
-        world_T_camXs = torch.from_numpy(d['world_T_camXs']).float()
-        world_T_camR = torch.from_numpy(d['world_T_camR']).float()
+        lrtlist = torch.from_numpy(d['lrt_traj_world']).cpu().float()
+        world_T_camXs = torch.from_numpy(d['world_T_camXs']).cpu().float()
+        world_T_camR = torch.from_numpy(d['world_T_camR']).cpu().float()
         camXs_T_world = utils.geom.safe_inverse(world_T_camXs)
         lrtlist_camXs = utils.geom.apply_4x4_to_lrtlist(camXs_T_world, lrtlist)
 
-        scorelist_s = torch.from_numpy(d['scorelist']).float()
+        scorelist_s = torch.from_numpy(d['scorelist']).cpu().float()
 
         return_dict['rgb_camXs'] = rgb_camXs
         return_dict['xyz_camXs'] = xyz_camXs
@@ -1183,18 +1179,19 @@ class CaterCacheDataset(torch.utils.data.Dataset):
         return item_names
 
 class KittiDataset(torch.utils.data.Dataset):
-    def __init__(self, shuffle=True, seqlen=50):
+    def __init__(self, shuffle=True, seqlen=50, dset='t'):
 
-        kitti_data_mod = 'ah'
-        kitti_data_seqlen = 2
+        kitti_data_mod = 'ak'
+        kitti_data_seqlen = 8
         kitti_data_incr = 1
 
         kitti_dataset_location = "/projects/katefgroup/datasets/kitti/processed/npzs"
 
         dataset_name = "ktrack"
+        trainset = "t%ss%si%s%s" % (kitti_data_mod, kitti_data_seqlen, kitti_data_incr, dset)
         # trainset = "t%ss%si%sa" % (kitti_data_mod, kitti_data_seqlen, kitti_data_incr)
         # trainset = "t%ss%si%sseq11" % (kitti_data_mod, kitti_data_seqlen, kitti_data_incr)
-        trainset = "t%ss%si%sseq11" % (kitti_data_mod, kitti_data_seqlen, kitti_data_incr)
+        # trainset = "t%ss%si%sseq11" % (kitti_data_mod, kitti_data_seqlen, kitti_data_incr)
         trainset_format = "ktrack"
         trainset_consec = False
         dataset_location = "%s" % kitti_dataset_location
@@ -1733,13 +1730,22 @@ class CocoCropDataset(torch.utils.data.Dataset):
         # randomize and select some good annotations
         annotations_list = list(annotations_by_images.values())
         random.shuffle(annotations_list)
-        n_to_include = 1000
+        n_to_include = 100
         n_included = 0
         n_at = -1
         self.annotations = []
         while n_included < n_to_include:
             n_at += 1
             annotation_list = annotations_list[n_at]
+
+            has_chair = False
+            for i, anno in enumerate(annotation_list):
+                if anno['category_id'] == 62:
+                    has_chair = True
+
+            if not has_chair:
+                continue
+
             valid = np.ones((len(annotation_list)))
 
             img_fn = os.path.join(self.image_path, self.image_template % annotation_list[0]['image_id'])
@@ -1753,6 +1759,7 @@ class CocoCropDataset(torch.utils.data.Dataset):
                 # overlap check
                 in_region_indices = np.unique(boxmask[int(y1):int(y2), int(x1):int(x2)])
                 in_region_indices = in_region_indices[in_region_indices!=-1]
+                import ipdb; ipdb.set_trace()
                 if len(in_region_indices) > 1:
                     valid[in_region_indices.astype(int)] = 0
                     valid[i] = 0
@@ -1763,14 +1770,23 @@ class CocoCropDataset(torch.utils.data.Dataset):
                 if x1 == 0 or y1 == 0 or x2 == W or y2 == H:
                     valid[i] = 0
                     continue
-                if y2 - y1 < 50 and x2 - x1 < 50:
+                if y2 - y1 < 100 and x2 - x1 < 100:
                     valid[i] = 0
                     continue
             valid = valid[:-1]
             if valid.sum() == 0:
                 continue
 
-            choose_idx = np.random.choice(np.array(np.where(valid == 1)).reshape(-1))
+            choose_idx = None 
+            for idx in range(len(valid)):
+                if valid[idx] == 1:
+                    if annotation_list[idx]['category_id'] == 62:
+                        choose_idx = idx
+                        break
+
+            if choose_idx is None:
+                continue
+
             self.annotations.append(annotation_list[choose_idx]) 
                 
             n_included += 1
@@ -1868,3 +1884,619 @@ def non_random_select_single(item_names, batch, num_samples=2):
 
     batch_new['ind_along_S'] = final_sample
     return batch_new
+
+
+def readPFM(file):
+    file = open(file, 'rb')
+
+    color = None
+    width = None
+    height = None
+    scale = None
+    endian = None
+
+    header = file.readline().rstrip()
+    if header.decode("ascii") == 'PF':
+        color = True
+    elif header.decode("ascii") == 'Pf':
+        color = False
+    else:
+        raise Exception('Not a PFM file.')
+
+    dim_match = re.match(r'^(\d+)\s(\d+)\s$', file.readline().decode("ascii"))
+    if dim_match:
+        width, height = list(map(int, dim_match.groups()))
+    else:
+        raise Exception('Malformed PFM header.')
+
+    scale = float(file.readline().decode("ascii").rstrip())
+    if scale < 0: # little-endian
+        endian = '<'
+        scale = -scale
+    else:
+        endian = '>' # big-endian
+
+    data = np.fromfile(file, endian + 'f')
+    shape = (height, width, 3) if color else (height, width)
+
+    data = np.reshape(data, shape)
+    data = np.flipud(data)
+    return data, scale
+
+def readImage(name):
+    if name.endswith('.pfm') or name.endswith('.PFM'):
+        data = readPFM(name)[0]
+        if len(data.shape)==3:
+            return data[:,:,0:3]
+        else:
+            return data
+
+    return imageio.imread(name)
+
+def readFlow(name):
+    if name.endswith('.pfm') or name.endswith('.PFM'):
+        return readPFM(name)[0][:,:,0:2]
+
+    f = open(name, 'rb')
+
+    header = f.read(4)
+    if header.decode("utf-8") != 'PIEH':
+        raise Exception('Flow file header does not contain PIEH')
+
+    width = np.fromfile(f, np.int32, 1).squeeze()
+    height = np.fromfile(f, np.int32, 1).squeeze()
+
+    flow = np.fromfile(f, np.float32, width * height * 2).reshape((height, width, 2))
+
+    return flow.astype(np.float32)
+
+class FlyingChairsDataset(torch.utils.data.Dataset):
+    def __init__(self, root_dir='/projects/katefgroup/datasets', dset='t', use_augs=False, N=0, crop_size=(368, 496)):
+        
+        self.num_examples = 22872
+        
+        self.N = N # num keypoints / sparse flows
+
+        self.root_dir = root_dir
+        data_path = '%s/flyingchairs' % self.root_dir
+        txt_fn = '%s/FlyingChairs_train_val.txt' % data_path
+        with open(txt_fn) as f:
+            content = f.readlines()
+        # print(len(content))
+
+        assert(len(content)==self.num_examples)
+
+        # labels = ['%d' % line for line in content]
+
+        labels = [int(line.strip()) for line in content]
+        # print('labels', labels)
+        
+        if dset=='t':
+            inds = np.array(labels)==1
+        elif dset=='v':
+            inds = np.array(labels)==2
+        else:
+            assert(False)
+ 
+        all_inds = np.array(list(range(1, self.num_examples + 1)))
+        self.dset_inds = all_inds[inds]
+
+        self.num_examples = len(self.dset_inds)
+        # self.dset_inds = all_inds[inds.nonzero()]
+        print('flyingchairs; dset %s; got %d samples' % (dset, self.num_examples))
+
+        self.use_augs = use_augs
+        
+        # photometric augmentation
+        self.photo_aug = ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.5/3.14)
+        self.asymmetric_color_aug_prob = 0.2
+
+        # occlusion augmentation
+        self.eraser_aug_prob = 0.5
+        self.eraser_bounds = [50, 100]
+
+        # spatial augmentations
+        self.crop_size = crop_size
+        self.min_scale = -0.1
+        self.max_scale = 1.0
+        self.spatial_aug_prob = 0.8
+        self.stretch_prob = 0.8
+        self.max_stretch = 0.2
+        self.do_flip = True
+        self.h_flip_prob = 0.5
+        self.v_flip_prob = 0.1
+        
+    def augment(self, rgbs, flows):
+        '''
+        Input:
+            rgbs --- list of len S, each = np.array (H, W, 3)
+            flows --- list of len S-1, each = np.array (H, W, 2)
+        Output:
+            rgbs_aug --- np.array (S, H, W, 3)
+            flows_aug --- np.array(S-1, H, W, 3)
+        '''
+        S = len(rgbs)
+        H, W = rgbs[0].shape[:2]
+
+        ############ photometric augmentation ############
+        if np.random.rand() < self.asymmetric_color_aug_prob:
+            for i in range(S):
+                rgbs[i] = np.array(self.photo_aug(Image.fromarray(rgbs[i])), dtype=np.uint8)
+        else:
+            image_stack = np.concatenate(rgbs, axis=0)
+            image_stack = np.array(self.photo_aug(Image.fromarray(image_stack)), dtype=np.uint8)
+            rgbs = np.split(image_stack, S, axis=0)
+
+        ############ eraser transform (per image) ############
+        for i in range(1, S):
+            if np.random.rand() < self.eraser_aug_prob:
+                mean_color = np.mean(rgbs[i].reshape(-1, 3), axis=0)
+                for _ in range(np.random.randint(1, 3)):
+                    x0 = np.random.randint(0, W)
+                    y0 = np.random.randint(0, H)
+                    dx = np.random.randint(self.eraser_bounds[0], self.eraser_bounds[1])
+                    dy = np.random.randint(self.eraser_bounds[0], self.eraser_bounds[1])
+                    rgbs[i][y0:y0+dy, x0:x0+dx, :] = mean_color
+
+        ############ spatial transform ############
+        image_stack = np.concatenate(rgbs, axis=0) # S*H, W, 3
+        flow_stack = np.concatenate(flows, axis=0) # ((S-1)*H), W, 2
+        # scaling + stretching
+        scale_x = 1.0
+        scale_y = 1.0
+        H_new = H
+        W_new = W
+        if np.random.rand() < self.spatial_aug_prob:
+            min_scale = np.maximum(
+                (self.crop_size[0] + 8) / float(H),
+                (self.crop_size[1] + 8) / float(W))
+
+            scale = 2 ** np.random.uniform(self.min_scale, self.max_scale)
+            scale_x = scale 
+            scale_y = scale 
+
+            if np.random.rand() < self.stretch_prob:
+                scale_x *= 2 ** np.random.uniform(-self.max_stretch, self.max_stretch)
+                scale_y *= 2 ** np.random.uniform(-self.max_stretch, self.max_stretch)
+
+            scale_x = np.clip(scale_x, min_scale, None)
+            scale_y = np.clip(scale_y, min_scale, None)
+
+            H_new = int(H * scale_y)
+            W_new = int(W * scale_x)
+            image_dim_resize = (W_new, H_new * S)
+            image_stack = cv2.resize(image_stack, image_dim_resize, interpolation=cv2.INTER_LINEAR)
+
+            flow_dim_resize = (W_new, H_new * (S-1))
+            flow_stack = cv2.resize(flow_stack, flow_dim_resize, interpolation=cv2.INTER_LINEAR)
+            flow_stack = flow_stack * [scale_x, scale_y]
+
+        # flip
+        h_flipped = False
+        v_flipped = False
+        if self.do_flip:
+            # h flip
+            if np.random.rand() < self.h_flip_prob:
+                h_flipped = True
+                image_stack = image_stack[:, ::-1]
+                flow_stack = flow_stack[:, ::-1] * [-1.0, 1.0]
+
+            # v flip
+            if np.random.rand() < self.v_flip_prob:
+                v_flipped = True
+                image_stack = image_stack[::-1, :]
+                flow_stack = flow_stack[::-1, :] * [1.0, -1.0]
+
+        y0 = np.random.randint(0, H_new - self.crop_size[0])
+        x0 = np.random.randint(0, W_new - self.crop_size[1])
+
+        rgbs = np.stack(np.split(image_stack, S, axis=0), axis=0)
+        rgbs = rgbs[:, y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
+        flows = np.stack(np.split(flow_stack, S-1, axis=0), axis=0)
+        flows = flows[:, y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
+
+        if v_flipped:
+            rgbs = rgbs[::-1]
+            flows = flows[::-1]
+
+        return rgbs, flows
+
+    def __getitem__(self, index):
+
+        data_ind = self.dset_inds[index]
+
+        data_path = '%s/flyingchairs/FlyingChairs_release/data' % self.root_dir
+
+        flow = readFlow('%s/%05d_flow.flo' % (data_path, data_ind))
+        rgb0 = readImage('%s/%05d_img1.ppm' % (data_path, data_ind))
+        rgb1 = readImage('%s/%05d_img2.ppm' % (data_path, data_ind))
+
+        if self.use_augs:
+            rgbs, flows = self.augment([rgb0, rgb1], [flow])
+            rgb0 = rgbs[0]
+            rgb1 = rgbs[1]
+            flow = flows[0]
+
+        flow = torch.from_numpy(flow) # H, W, 2
+        rgb0 = torch.from_numpy(rgb0) # H, W, 3
+        rgb1 = torch.from_numpy(rgb1) # H, W, 3
+
+        # h_ind = np.random.randint(H)
+        # w_ind = np.random.randint(W)
+
+        H, W, C = rgb0.shape
+
+        if self.N > 0:
+            kp_xys = []
+            for n in range(self.N):
+                retry = True
+                num_tries = 0
+
+                while retry:
+                    num_tries += 1
+
+                    kp_x0 = torch.randint(low=0, high=W-1, size=[])
+                    kp_y0 = torch.randint(low=0, high=H-1, size=[])
+                    kp_xy0 = torch.stack([kp_x0, kp_y0], dim=0).float() # 2
+                    kp_xy1 = kp_xy0 + flow[kp_y0, kp_x0] # 2
+                    kp_xy = torch.stack([kp_xy0, kp_xy1], dim=0) # S, 2
+
+                    if (kp_xy1[0] > 0 and
+                        kp_xy1[0] < (W-1) and
+                        kp_xy1[1] > 0 and
+                        kp_xy1[1] < (H-1)):
+                        dist = torch.norm(flow[kp_y0, kp_x0])
+                        # if dist > 5:
+                        #     retry = False
+
+                    if num_tries > 10:
+                        retry = False
+                kp_xys.append(kp_xy)
+            kp_xys = torch.stack(kp_xys, dim=1) # S, N, 2
+            d = {
+                'flow': flow,
+                'rgb0': rgb0,
+                'rgb1': rgb1,
+                'xys': kp_xys,
+            }
+        else:
+            d = {
+                'flow': flow,
+                'rgb0': rgb0,
+                'rgb1': rgb1,
+            }
+
+            
+        return d
+
+    def __len__(self):
+        # return 100
+        # return 500
+        return self.num_examples
+
+
+
+class FlyingThingsDataset(torch.utils.data.Dataset):
+    def __init__(self, root_dir='/projects/katefgroup/datasets', dset='TRAIN', subset='all', use_augs=False, N=0, S=4, crop_size=(368, 496)):
+        dataset_location = '%s/flyingthings3d_full' % root_dir
+
+        self.S = S
+        self.N = N
+
+        self.use_augs = use_augs
+        
+        self.rgb_paths = []
+        self.traj_paths = []
+        self.flow_f_paths = []
+        self.flow_b_paths = []
+
+        if subset=='all':
+            subsets = ['A', 'B', 'C']
+        else:
+            subsets = [subset]
+
+        for subset in subsets:
+            rgb_root_path = os.path.join(dataset_location, "frames_cleanpass_webp", dset, subset)
+            flow_root_path = os.path.join(dataset_location, "optical_flow", dset, subset)
+            traj_root_path = os.path.join(dataset_location, "linked_flows_ag", dset, subset)
+            # print('traj_root_path', traj_root_path)
+
+            folder_names = [folder.split('/')[-1] for folder in glob.glob(os.path.join(traj_root_path, "*"))]
+            folder_names = sorted(folder_names)
+            # print('folder_names', folder_names)
+
+            for ii, folder_name in enumerate(folder_names):
+                # sys.stdout.write('.')
+                # sys.stdout.flush()
+                for lr in ['left', 'right']:
+                    cur_rgb_path = os.path.join(rgb_root_path, folder_name, lr)
+                    cur_traj_path = os.path.join(traj_root_path, folder_name, lr)
+                    cur_flow_f_path = os.path.join(flow_root_path, folder_name, "into_future", lr)
+                    cur_flow_b_path = os.path.join(flow_root_path, folder_name, "into_past", lr)
+                    # print('cur_traj_path', cur_traj_path)
+                    if os.path.isfile(cur_traj_path + '/traj.npz'):
+
+                        trajs = np.load(os.path.join(cur_traj_path, 'traj.npz'), allow_pickle=True)
+                        trajs = dict(trajs)['trajs']
+                        N = trajs.shape[0]
+                        # trajs = torch.from_numpy(trajs) # N, S, 2
+                        # print('trajs', trajs.shape)
+                        if N >= self.N*3:
+                            # print('adding this one')
+                            self.rgb_paths.append(cur_rgb_path)
+                            self.traj_paths.append(cur_traj_path)
+                            self.flow_f_paths.append(cur_flow_f_path)
+                            self.flow_b_paths.append(cur_flow_b_path)
+
+        print('found %d samples in %s' % (len(self.rgb_paths), dataset_location))
+
+        # photometric augmentation
+        self.photo_aug = ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.5/3.14)
+        self.asymmetric_color_aug_prob = 0.2
+
+        # occlusion augmentation
+        self.eraser_aug_prob = 0.5
+        self.eraser_bounds = [20, 300]
+
+        # spatial augmentations
+        self.crop_size = crop_size
+        self.min_scale = -0.1 # 2^this
+        self.max_scale = 1.0 # 2^this
+        self.spatial_aug_prob = 0.8
+        self.stretch_prob = 0.8
+        self.max_stretch = 0.2
+        self.do_flip = True
+        self.h_flip_prob = 0.5
+        self.v_flip_prob = 0.1
+        
+    def __getitem__(self, index):
+        gotit = False
+        while not gotit:
+
+            cur_rgb_path = self.rgb_paths[index]
+            cur_traj_path = self.traj_paths[index]
+            cur_flow_f_path = self.flow_f_paths[index]
+            cur_flow_b_path = self.flow_b_paths[index]
+            # print('cur_rgb_path', cur_rgb_path)
+
+            img_names = [folder.split('/')[-1].split('.')[0] for folder in glob.glob(os.path.join(cur_rgb_path, "*"))]
+            img_names = sorted(img_names)
+
+            start_ind = 0
+            img_names = img_names[start_ind:start_ind+self.S]
+
+            rgbs = []
+            flows_f = []
+            flows_b = []
+
+            for img_name in img_names:
+                im = Image.open(os.path.join(cur_rgb_path, '{0}.webp'.format(img_name))) # H, W, 3
+                rgbs.append(np.array(im))
+
+            trajs = np.load(os.path.join(cur_traj_path, 'traj.npz'), allow_pickle=True)
+            trajs = dict(trajs)['trajs'] # N, S, 2
+
+            N_, S_, D_ = trajs.shape
+            assert(N_ >= self.N)
+            assert(S_ >= self.S)
+
+            trajs = trajs[:, :self.S]
+            # print('trajs', trajs.shape)
+
+            if self.use_augs:
+                success = False
+                for _ in range(5):
+                    rgbs_aug, trajs_aug, visibles_aug = self.augment(rgbs, trajs)
+                    try:
+                        N_ = trajs_aug.shape[0]
+                        if N_ >= self.N:
+                            success = True
+                        break
+                    except:
+                        # print('retrying aug')
+                        continue
+                rgbs, trajs, visibles = rgbs_aug, trajs_aug, visibles_aug
+            else:
+                rgbs, trajs = self.just_crop(rgbs, trajs)
+                Ntraj, Ttraj, _ = trajs.shape
+                visibles = np.ones((Ntraj, Ttraj))
+
+            # if success:
+            #     traj_id = np.random.choice(trajs.shape[0], size=self.N)
+            #     # print('traj_id', traj_id)
+            #     trajs = trajs[traj_id] # N, S, 2
+
+            #     rgbs = torch.from_numpy(np.stack(rgbs, 0)).permute(0, 3, 1, 2) # S, C, H, W
+            #     trajs = torch.from_numpy(trajs) # N, S, 2
+
+            #     return_dict = {
+            #         'rgbs': rgbs,
+            #         'trajs': trajs,
+            #     }
+            #     return return_dict, True
+            # else:
+            #     return False, False
+
+            N_ = min(trajs.shape[0], self.N)
+            traj_id = np.random.choice(trajs.shape[0], size=N_)
+            # trajs = trajs[traj_id] # N, S, 2
+
+            trajs_full = np.zeros((self.N, self.S, 2)).astype(np.float32)
+            valids = np.zeros((self.N)).astype(np.float32)
+            trajs_full[:N_] = trajs[traj_id]
+            valids[:N_] = 1
+            visibles = visibles[traj_id]
+
+            rgbs = torch.from_numpy(np.stack(rgbs, 0)).permute(0, 3, 1, 2) # S, C, H, W
+            trajs = torch.from_numpy(trajs_full) # N, S, 2
+            valids = torch.from_numpy(valids) # N
+            visibles = torch.from_numpy(visibles)
+
+            if torch.sum(valids)==self.N:
+                gotit = True
+            else:
+                # print('re-indexing...')
+                index = np.random.randint(0, len(self.rgb_paths))
+                
+        # print('torch.sum(valids)', torch.sum(valids))
+        return_dict = {
+            'rgbs': rgbs,
+            'trajs': trajs,
+            'valids': valids,
+            'visibles': visibles,
+        }
+        return return_dict
+        
+
+    def augment(self, rgbs, trajs):
+        '''
+        Input:
+            rgbs --- list of len S, each = np.array (H, W, 3)
+            trajs --- np.array (N, T, 2)
+        Output:
+            rgbs_aug --- np.array (S, H, W, 3)
+            trajs_aug --- np.array (N_new, T, 2)
+            visibles_aug --- np.array (N_new, T)
+        '''
+
+        N, T, _ = trajs.shape
+        visibles = np.ones((N, T))
+        
+        S = len(rgbs)
+        H, W = rgbs[0].shape[:2]
+
+        ############ photometric augmentation ############
+        if np.random.rand() < self.asymmetric_color_aug_prob:
+            for i in range(S):
+                rgbs[i] = np.array(self.photo_aug(Image.fromarray(rgbs[i])), dtype=np.uint8)
+        else:
+            image_stack = np.concatenate(rgbs, axis=0)
+            image_stack = np.array(self.photo_aug(Image.fromarray(image_stack)), dtype=np.uint8)
+            rgbs = np.split(image_stack, S, axis=0)
+
+        ############ eraser transform (per image) ############
+        for i in range(1, S):
+            if np.random.rand() < self.eraser_aug_prob:
+                mean_color = np.mean(rgbs[i].reshape(-1, 3), axis=0)
+                for _ in range(np.random.randint(1, 6)):
+                    xc = np.random.randint(0, W)
+                    yc = np.random.randint(0, H)
+                    dx = np.random.randint(self.eraser_bounds[0], self.eraser_bounds[1])
+                    dy = np.random.randint(self.eraser_bounds[0], self.eraser_bounds[1])
+                    x0 = np.clip(xc - dx/2, 0, W-1).round().astype(np.int32)
+                    x1 = np.clip(xc + dx/2, 0, W-1).round().astype(np.int32)
+                    y0 = np.clip(yc - dy/2, 0, W-1).round().astype(np.int32)
+                    y1 = np.clip(yc + dy/2, 0, W-1).round().astype(np.int32)
+                    # print(x0, x1, y0, y1)
+                    rgbs[i][y0:y1, x0:x1, :] = mean_color
+
+                    occ_inds = np.logical_and(np.logical_and(trajs[:,i,0] >= x0, trajs[:,i,0] < x1), np.logical_and(trajs[:,i,1] >= y0, trajs[:,i,1] < y1))
+                    visibles[occ_inds, i] = 0
+
+        ############ spatial transform ############
+        image_stack = np.concatenate(rgbs, axis=0)
+        # scaling + stretching
+        scale_x = 1.0
+        scale_y = 1.0
+        H_new = H
+        W_new = W
+        if np.random.rand() < self.spatial_aug_prob:
+            min_scale = np.maximum(
+                (self.crop_size[0] + 8) / float(H),
+                (self.crop_size[1] + 8) / float(W))
+
+            scale = 2 ** np.random.uniform(self.min_scale, self.max_scale)
+            scale_x = scale 
+            scale_y = scale 
+
+            if np.random.rand() < self.stretch_prob:
+                scale_x *= 2 ** np.random.uniform(-self.max_stretch, self.max_stretch)
+                scale_y *= 2 ** np.random.uniform(-self.max_stretch, self.max_stretch)
+
+            scale_x = np.clip(scale_x, min_scale, None)
+            scale_y = np.clip(scale_y, min_scale, None)
+
+            H_new = int(H * scale_y)
+            W_new = int(W * scale_x)
+            dim_resize = (W_new, H_new * S)
+            image_stack = cv2.resize(image_stack, dim_resize, interpolation=cv2.INTER_LINEAR)
+
+        # flip
+        h_flipped = False
+        v_flipped = False
+        if self.do_flip:
+            # h flip
+            if np.random.rand() < self.h_flip_prob:
+                h_flipped = True
+                image_stack = image_stack[:, ::-1]
+
+            # v flip
+            if np.random.rand() < self.v_flip_prob:
+                v_flipped = True
+                image_stack = image_stack[::-1, :]
+
+        y0 = np.random.randint(0, H_new - self.crop_size[0])
+        x0 = np.random.randint(0, W_new - self.crop_size[1])
+
+        rgbs = np.stack(np.split(image_stack, S, axis=0), axis=0)
+        rgbs = rgbs[:, y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
+
+        if v_flipped:
+            rgbs = rgbs[::-1]
+        
+        # transform trajs
+        trajs[:, :, 0] *= scale_x
+        trajs[:, :, 1] *= scale_y
+        if h_flipped:
+            trajs[:, :, 0] = W_new - trajs[:, :, 0]
+        if v_flipped:
+            trajs[:, :, 1] = H_new - trajs[:, :, 1]
+        trajs[:, :, 0] -= x0
+        trajs[:, :, 1] -= y0
+
+        inbound = (trajs[:, 0, 0] >= 0) & (trajs[:, 0, 0] < self.crop_size[1]) & (trajs[:, 0, 1] >= 0) & (trajs[:, 0, 1] < self.crop_size[0])
+        trajs = trajs[inbound]
+        visibles = visibles[inbound]
+
+        return rgbs, trajs, visibles
+    
+    def just_crop(self, rgbs, trajs):
+        '''
+        Input:
+            rgbs --- list of len S, each = np.array (H, W, 3)
+            trajs --- np.array (N, T, 2)
+        Output:
+            rgbs_aug --- np.array (S, H, W, 3)
+            trajs_aug --- np.array (N_new, T, 2)
+        '''
+        
+        S = len(rgbs)
+        H, W = rgbs[0].shape[:2]
+
+        ############ spatial transform ############
+        image_stack = np.concatenate(rgbs, axis=0)
+        # scaling + stretching
+        scale_x = 1.0
+        scale_y = 1.0
+        H_new = H
+        W_new = W
+
+        y0 = np.random.randint(0, H_new - self.crop_size[0])
+        x0 = np.random.randint(0, W_new - self.crop_size[1])
+
+        rgbs = np.stack(np.split(image_stack, S, axis=0), axis=0)
+        rgbs = rgbs[:, y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
+
+        trajs[:, :, 0] -= x0
+        trajs[:, :, 1] -= y0
+
+        inbound = (trajs[:, 0, 0] >= 0) & (trajs[:, 0, 0] < self.crop_size[1]) & (trajs[:, 0, 1] >= 0) & (trajs[:, 0, 1] < self.crop_size[0])
+        trajs = trajs[inbound]
+
+        return rgbs, trajs
+
+    def __len__(self):
+        # return 10
+        return len(self.rgb_paths)
+    
+
